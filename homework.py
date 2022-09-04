@@ -109,6 +109,36 @@ def check_tokens():
     return True
 
 
+def PerformException(e, bot):
+    """Обработчик исключений."""
+    if e == exceptions.StrangeAPIAnswerException:
+        logging.error('Эндпоинт недоступен')
+        if not errors['get_api_answer']:
+            errors['get_api_answer'] = True
+            send_message(bot, 'Эндпоинт недоступен')
+    elif e == exceptions.NoKeysException:
+        logging.error('Отсутствуют необходимые ключи')
+        if not errors['check_response']:
+            errors['check_response'] = True
+            send_message(bot, 'Отсутствуют необходимые ключи')
+    elif e == exceptions.UnknownStatusException:
+        logging.error(
+            'Неизвестный статус домашнего задания'
+        )
+        if not errors['parse_status']:
+            errors['parse_status'] = True
+            send_message(
+                bot,
+                'Неизвестный статус домашнего задания'
+            )
+    else:
+        message = f'Сбой в работе программы: {e}'
+        logging.error(message)
+        if not errors['main']:
+            errors['main'] = True
+            send_message(bot, message)
+
+
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
@@ -133,32 +163,8 @@ def main():
                             send_message(bot, message)
             errors['main'] = False
             current_timestamp = int(time.time())
-        except exceptions.StrangeAPIAnswerException:
-            logging.error('Эндпоинт недоступен')
-            if not errors['get_api_answer']:
-                errors['get_api_answer'] = True
-                send_message(bot, 'Эндпоинт недоступен')
-        except exceptions.NoKeysException:
-            logging.error('Отсутствуют необходимые ключи')
-            if not errors['check_response']:
-                errors['check_response'] = True
-                send_message(bot, 'Отсутствуют необходимые ключи')
-        except exceptions.UnknownStatusException:
-            logging.error(
-                'Неизвестный статус домашнего задания'
-            )
-            if not errors['parse_status']:
-                errors['parse_status'] = True
-                send_message(
-                    bot,
-                    'Неизвестный статус домашнего задания'
-                )
-        except Exception as error:
-            message = f'Сбой в работе программы: {error}'
-            logging.error(message)
-            if not errors['main']:
-                errors['main'] = True
-                send_message(bot, message)
+        except Exception:
+            PerformException(Exception, bot)
         finally:
             time.sleep(RETRY_TIME)
 
