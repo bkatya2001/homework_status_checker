@@ -6,18 +6,11 @@ import time
 
 import telegram
 from dotenv import load_dotenv
+from http import HTTPStatus
 
 import exceptions
 
 load_dotenv()
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    filename='bot.log',
-    filemode='a',
-    format='%(asctime)s, %(levelname)s, %(message)s'
-)
-handler = logging.StreamHandler(stream=sys.stdout)
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -28,7 +21,7 @@ ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 
-HOMEWORK_STATUSES = {
+HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
@@ -44,10 +37,12 @@ errors = {
 
 def send_message(bot, message):
     """Отправка сообщения."""
+    logging.info('Совершается попытка отправить сообщение')
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logging.info('Сообщение успешно отправлено')
     except Exception as e:
+        raise exceptions.SendMessageException('Ошибка при отправке сообщения')
         logging.error('Ошибка при отправке сообщения: ' + str(e))
 
 
@@ -56,15 +51,19 @@ def get_api_answer(current_timestamp):
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
 
-    homework_statuses = requests.get(ENDPOINT, headers=HEADERS, params=params)
-    if homework_statuses.status_code == 200:
-        errors['get_api_answer'] = False
-        return homework_statuses.json()
-    else:
-        logging.error('Эндпоинт недоступен')
-        if not errors['get_api_answer']:
-            errors['get_api_answer'] = True
-            send_message(bot, 'Эндпоинт недоступен')
+    try:
+        homework_statuses = requests.get(
+            ENDPOINT,
+            headers=HEADERS,
+            params=params
+        )
+        if homework_statuses.status_code == HTTPStatus.OK:
+            errors['get_api_answer'] = False
+            return homework_statuses.json()
+        else:
+            raise exceptions.StrangeAPIAnswerException('Эндпоинт недоступен')
+    except Exception:
+        raise exceptions.StrangeAPIAnswerException('Эндпоинт недоступен')
 
 
 def check_response(response):
@@ -78,10 +77,7 @@ def check_response(response):
                 return response['homeworks']
     else:
         raise TypeError
-    logging.error('Отсутствуют необходимые ключи')
-    if not errors['check_response']:
-        errors['check_response'] = True
-        send_message(bot, 'Отсутствуют необходимые ключи')
+    raise exceptions.NoKeysException('Отсутствуют необходимые ключи')
 
 
 def parse_status(homework):
@@ -90,19 +86,13 @@ def parse_status(homework):
     homework_status = homework['status']
 
     try:
-        verdict = HOMEWORK_STATUSES[homework_status]
+        verdict = HOMEWORK_VERDICTS[homework_status]
         errors['parse_status'] = False
         return f'Изменился статус проверки работы "{homework_name}". {verdict}'
     except Exception:
-        logging.error(
-            'Неизвестный статус домашнего задания: ' + homework_status
+        raise exceptions.UnknownStatusException(
+            'Неизвестный статус домашнего задания'
         )
-        if not errors['parse_status']:
-            errors['parse_status'] = True
-            send_message(
-                bot,
-                'Неизвестный статус домашнего задания: ' + homework_status
-            )
 
 
 def check_tokens():
@@ -127,7 +117,6 @@ def main():
         )
 
     current_timestamp = int(time.time())
-    global bot
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
     while True:
@@ -144,16 +133,42 @@ def main():
                             send_message(bot, message)
             errors['main'] = False
             current_timestamp = int(time.time())
-            time.sleep(RETRY_TIME)
-
+        except exceptions.StrangeAPIAnswerException:
+            logging.error('Эндпоинт недоступен')
+            if not errors['get_api_answer']:
+                errors['get_api_answer'] = True
+                send_message(bot, 'Эндпоинт недоступен')
+        except exceptions.NoKeysException:
+            logging.error('Отсутствуют необходимые ключи')
+            if not errors['check_response']:
+                errors['check_response'] = True
+                send_message(bot, 'Отсутствуют необходимые ключи')
+        except exceptions.UnknownStatusException:
+            logging.error(
+                'Неизвестный статус домашнего задания'
+            )
+            if not errors['parse_status']:
+                errors['parse_status'] = True
+                send_message(
+                    bot,
+                    'Неизвестный статус домашнего задания'
+                )
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logging.error(message)
             if not errors['main']:
                 errors['main'] = True
                 send_message(bot, message)
+        finally:
             time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        filename='bot.log',
+        filemode='a',
+        format='%(asctime)s, %(levelname)s, %(message)s'
+    )
+    handler = logging.StreamHandler(stream=sys.stdout)
     main()
